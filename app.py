@@ -109,28 +109,41 @@ def _render_label_result(result: LabelResult) -> None:
         st.warning("No fields were returned for this label.")
         return
 
-    rows = []
     for f in result.fields:
-        rows.append(
-            {
-                "Field": f.field_name,
-                "Application Value": f.application_value or "—",
-                "Label Value": f.label_value or "—",
-                "Status": f"{STATUS_ICON.get(f.status, '')} {f.status}",
-                "Notes": f.notes or "",
-            }
+        bg = OVERALL_BG.get(f.status, "#ffffff")
+        border = STATUS_COLOUR.get(f.status, "#888")
+        status_label = f"{STATUS_ICON.get(f.status, '')} {f.status}"
+        notes_html = (
+            f'<div style="margin-top:6px; font-size:0.85em; color:#555;">{f.notes}</div>'
+            if f.notes
+            else ""
         )
-
-    df = pd.DataFrame(rows)
-
-    # Apply row background colours
-    def colour_row(row):
-        raw_status = row["Status"].split(" ", 1)[-1].strip()
-        bg = OVERALL_BG.get(raw_status, "#ffffff")
-        return [f"background-color: {bg}"] * len(row)
-
-    styled = df.style.apply(colour_row, axis=1)
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+        st.markdown(
+            f"""
+            <div style="
+                background:{bg};
+                border-radius:8px;
+                padding:10px 14px;
+                margin-bottom:6px;
+                border-left: 4px solid {border};
+            ">
+            <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                <strong>{f.field_name}</strong>
+                <span>{status_label}</span>
+            </div>
+            <div style="margin-top:6px;">
+                <div style="font-size:0.85em; color:#555;">Application Value</div>
+                <div>{f.application_value or "—"}</div>
+            </div>
+            <div style="margin-top:6px;">
+                <div style="font-size:0.85em; color:#555;">Label Value</div>
+                <div>{f.label_value or "—"}</div>
+            </div>
+            {notes_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def _extract_images_from_upload(uploaded_files) -> list[tuple[str, bytes]]:
