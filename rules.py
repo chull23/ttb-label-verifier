@@ -29,14 +29,19 @@ GOVERNMENT_WARNING_TEXT = (
 )
 
 # Pre-compiled regex: matches the statutory text with any internal whitespace variation.
+# Words ending in ':' also tolerate a space before the colon, e.g. "WARNING :".
 _WARNING_WORDS = GOVERNMENT_WARNING_TEXT.split()
 _WARNING_PATTERN = re.compile(
-    r"\s+".join(re.escape(w) for w in _WARNING_WORDS),
+    r"\s+".join(
+        re.escape(w[:-1]) + r"\s*:" if w.endswith(":") else re.escape(w)
+        for w in _WARNING_WORDS
+    ),
     re.IGNORECASE,
 )
 
-# The header must be EXACTLY all-caps (per Jenny Park's requirement).
-_WARNING_HEADER_PATTERN = re.compile(r"^GOVERNMENT WARNING:", re.MULTILINE)
+# The header must be EXACTLY all-caps (per Jenny Park's requirement). Tolerate a
+# space before the colon, e.g. "GOVERNMENT WARNING :".
+_WARNING_HEADER_PATTERN = re.compile(r"^GOVERNMENT WARNING\s*:", re.MULTILINE)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -62,12 +67,12 @@ def _parse_abv(text: str) -> float | None:
     Handles: '45%', '45% Alc./Vol.', '45% Alc./Vol. (90 Proof)', '45.0 percent'.
     Returns None if no number found.
     """
-    match = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*%", text)
     if match:
-        return float(match.group(1))
-    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:percent|alc)", text, re.IGNORECASE)
+        return float(match.group(1).replace(",", "."))
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:percent|alc)", text, re.IGNORECASE)
     if match:
-        return float(match.group(1))
+        return float(match.group(1).replace(",", "."))
     return None
 
 
@@ -1305,6 +1310,46 @@ def check_aspartame_declaration(
     )
 
 
+# ── Beverage type detection ─────────────────────────────────────────────────────
+
+_WINE_KEYWORDS = ("wine", "champagne", "chardonnay") + tuple(GRAPE_VARIETALS)
+_BEER_KEYWORDS = ("beer", "ale", "lager", "stout", "porter", "malt beverage", "ipa", "pilsner")
+_SPIRITS_KEYWORDS = (
+    "whiskey", "whisky", "bourbon", "vodka", "gin", "rum", "tequila", "brandy",
+    "liqueur", "spirits", "scotch",
+)
+
+
+def detect_beverage_type(
+    label_class_type: str | None,
+    label_sulfite_statement: str | None = None,
+    label_appellation: str | None = None,
+) -> str | None:
+    """
+    Infer beverage type ('wine', 'beer', or 'distilled_spirits') from the
+    label's class/type designation, falling back to other wine-specific
+    fields (sulfite statement, appellation of origin) if the class/type
+    designation alone (e.g. an appellation name) doesn't indicate a type.
+    Returns None if undetermined.
+    """
+    if label_class_type:
+        normalised = _normalise(label_class_type)
+
+        if any(k in normalised for k in _SPIRITS_KEYWORDS):
+            return "distilled_spirits"
+        if any(k in normalised for k in _BEER_KEYWORDS):
+            return "beer"
+        if any(k in normalised for k in _WINE_KEYWORDS):
+            return "wine"
+
+    if (label_sulfite_statement and label_sulfite_statement.strip()) or (
+        label_appellation and label_appellation.strip()
+    ):
+        return "wine"
+
+    return None
+
+
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 def apply_rules(
@@ -1391,7 +1436,12 @@ def apply_rules(
     label_aspartame_statement, aspartame_conf, _ = get("aspartame_statement")
     label_net_contents, net_contents_conf, _ = get("net_contents")
 
-    beverage_type = application.beverage_type or "distilled_spirits"
+    beverage_type = application.beverage_type
+    if not beverage_type or beverage_type == "auto":
+        beverage_type = (
+            detect_beverage_type(label_class_type, label_sulfite_statement, label_appellation)
+            or "distilled_spirits"
+        )
 
     # ABV abbreviation prohibition applies to spirits and wine.
     if beverage_type in ("distilled_spirits", "wine"):

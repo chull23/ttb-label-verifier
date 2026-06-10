@@ -246,8 +246,9 @@ def _render_sidebar() -> None:
 
         st.selectbox(
             "Beverage Type",
-            options=["distilled_spirits", "wine", "beer"],
+            options=["auto", "distilled_spirits", "wine", "beer"],
             format_func=lambda v: {
+                "auto": "Auto-detect from label",
                 "distilled_spirits": "Distilled Spirits",
                 "wine": "Wine",
                 "beer": "Beer / Malt Beverage",
