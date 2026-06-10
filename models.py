@@ -132,8 +132,8 @@ class ApplicationData:
     country_of_origin: str = ""
     age_statement: str = ""
 
-    beverage_type: str = "distilled_spirits"
-    """One of 'distilled_spirits', 'wine', 'beer'. Routes type-specific rules."""
+    beverage_type: str = "auto"
+    """One of 'auto', 'distilled_spirits', 'wine', 'beer'. Routes type-specific rules."""
 
     sulfite_ppm: str = ""
     """Wine: declared sulfur dioxide level, e.g. '25 ppm' or '0'."""
