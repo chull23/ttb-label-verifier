@@ -71,6 +71,31 @@ def _parse_abv(text: str) -> float | None:
     return None
 
 
+def _parse_proof(text: str) -> float | None:
+    """
+    Extract a proof value from a string, e.g. '45% Alc./Vol. (90 Proof)' -> 90.0.
+    Returns None if no proof figure is present.
+    """
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:°\s*)?proof", text, re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+def _parse_age_years(text: str) -> float | None:
+    """
+    Extract an age in years from a string, e.g. 'Aged 3 Years' -> 3.0,
+    'Aged 18 Months' -> 1.5. Returns None if nothing parseable.
+    """
+    match = re.search(r"(\d+(?:\.\d+)?)\s*year", text, re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+    match = re.search(r"(\d+(?:\.\d+)?)\s*month", text, re.IGNORECASE)
+    if match:
+        return float(match.group(1)) / 12.0
+    return None
+
+
 def _parse_volume_ml(text: str) -> float | None:
     """
     Extract a volume in mL from a string.
@@ -383,6 +408,257 @@ def check_presence_only(
     )
 
 
+# ── Standards-of-identity rules (27 CFR Part 5) ────────────────────────────────
+
+MINIMUM_BOTTLING_PROOF = 80.0  # 40% ABV, per 27 CFR 5.143
+
+
+def check_minimum_bottling_proof(
+    label_value: str | None,
+    confidence: float,
+) -> FieldResult:
+    """27 CFR 5.143 — distilled spirits must be bottled at >= 40% ABV (80 proof)."""
+    field_name = "Minimum Bottling Proof"
+    requirement = "≥ 40% ABV (80 proof) per 27 CFR 5.143"
+
+    if label_value is None:
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=None,
+            status="NOT_FOUND",
+            notes="Alcohol content not found on the label; cannot verify minimum bottling proof.",
+            confidence=confidence,
+        )
+
+    label_abv = _parse_abv(label_value)
+    if label_abv is None:
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=label_value,
+            status="NOT_FOUND",
+            notes="Could not parse a numeric ABV from the label's alcohol content.",
+            confidence=confidence,
+        )
+
+    if label_abv >= 40.0:
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = (
+            f"Label states {label_abv}% ABV, which is below the 40% ABV (80 proof) "
+            "minimum bottling proof required by 27 CFR 5.143."
+        )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_value,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+def check_proof_consistency(
+    label_value: str | None,
+    confidence: float,
+    tolerance: float = 0.5,
+) -> FieldResult:
+    """If the label shows both a % ABV and a proof figure, proof must equal ABV * 2."""
+    field_name = "Proof Consistency"
+    requirement = "Proof = ABV × 2"
+
+    if label_value is None:
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=None,
+            status="NOT_FOUND",
+            notes="Alcohol content not found on the label.",
+            confidence=confidence,
+        )
+
+    label_abv = _parse_abv(label_value)
+    label_proof = _parse_proof(label_value)
+
+    if label_abv is None or label_proof is None:
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=label_value,
+            status="NOT_FOUND",
+            notes="Label does not show both an ABV percentage and a proof figure.",
+            confidence=confidence,
+        )
+
+    expected_proof = label_abv * 2
+    if abs(expected_proof - label_proof) <= tolerance:
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = (
+            f"Label shows {label_abv}% ABV with {label_proof} proof, but proof should "
+            f"equal ABV × 2 = {expected_proof:g}."
+        )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_value,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+def check_bourbon_us_origin(
+    class_type_label: str,
+    country_label: str | None,
+    confidence: float,
+) -> FieldResult:
+    """27 CFR 5.143(b) — 'Bourbon' may only appear on spirits distilled and aged in the USA."""
+    field_name = "Bourbon — US Origin"
+    requirement = "Country of origin must be USA (or absent) per 27 CFR 5.143(b)"
+
+    us_terms = ("usa", "united states", "america")
+    normalised_country = _normalise(country_label) if country_label else ""
+
+    if not country_label or any(term in normalised_country for term in us_terms):
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = (
+            f"Class/type includes 'Bourbon' but the label states country of origin as "
+            f"'{country_label}'. 'Bourbon' may only be used for spirits distilled and "
+            "aged in the United States (27 CFR 5.143(b))."
+        )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=country_label,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+def check_kentucky_designation(
+    class_type_label: str,
+    bottler_address_label: str | None,
+    confidence: float,
+) -> FieldResult:
+    """'Kentucky Straight Bourbon Whiskey' requires distillation/aging in Kentucky."""
+    field_name = "Kentucky Designation"
+    requirement = "Bottler/producer address must be in Kentucky (27 CFR 5.143(b))"
+
+    if not bottler_address_label or not bottler_address_label.strip():
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=bottler_address_label,
+            status="NOT_FOUND",
+            notes="Bottler/producer address not found on the label.",
+            confidence=confidence,
+        )
+
+    normalised_address = _normalise(bottler_address_label)
+    if "kentucky" in normalised_address or re.search(r"\bky\b", normalised_address):
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = (
+            f"Class/type uses the 'Kentucky' designation, but the bottler/producer "
+            f"address ('{bottler_address_label}') does not indicate Kentucky. "
+            "'Kentucky' designations require distillation and aging in Kentucky "
+            "(27 CFR 5.143(b))."
+        )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=bottler_address_label,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+def check_age_statement(
+    application_age_value: str,
+    label_age_value: str | None,
+    confidence: float,
+) -> FieldResult:
+    """27 CFR 5.74 — straight whiskey aged less than 4 years must show an age statement."""
+    field_name = "Age Statement"
+    requirement = application_age_value
+
+    app_age_years = _parse_age_years(application_age_value)
+    if app_age_years is None or app_age_years >= 4:
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=label_age_value,
+            status="NOT_FOUND",
+            notes="Could not determine application age, or age is 4+ years (no statement required).",
+            confidence=confidence,
+        )
+
+    if label_age_value and label_age_value.strip():
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = (
+            f"COLA application states an age of {app_age_years:g} years (under 4 years), "
+            "so an age statement is required on the label per 27 CFR 5.74, but none was found."
+        )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_age_value,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+def check_no_additives_for_straight(
+    class_type_label: str,
+    additives_label: str | None,
+    confidence: float,
+) -> FieldResult:
+    """27 CFR 5.143, Table 1 row 5 — 'Straight' spirits allow no coloring/flavoring/blending materials."""
+    field_name = "Straight — No Additives"
+    requirement = "No coloring, flavoring, or blending materials permitted (27 CFR 5.143)"
+
+    if additives_label and additives_label.strip():
+        status: FieldStatus = "FAIL"
+        notes = (
+            f"Class/type includes 'Straight', which permits no coloring, flavoring, or "
+            f"blending materials, but the label states: '{additives_label}'."
+        )
+    else:
+        status = "PASS"
+        notes = ""
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=additives_label,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 def apply_rules(
@@ -454,5 +730,31 @@ def apply_rules(
         results.append(
             check_presence_only("Country of Origin", filled["country_of_origin"], val, conf)
         )
+
+    # ── Standards-of-identity rules (27 CFR Part 5) ─────────────────────────────
+    label_alcohol_content, alcohol_conf, _ = get("alcohol_content")
+    label_class_type, class_type_conf, _ = get("class_type")
+    label_country, country_conf, _ = get("country_of_origin")
+    label_bottler, bottler_conf, _ = get("bottler_name_address")
+    label_age, age_conf, _ = get("age_statement")
+    label_additives, additives_conf, _ = get("additives_or_flavoring")
+
+    if "alcohol_content" in filled:
+        results.append(check_minimum_bottling_proof(label_alcohol_content, alcohol_conf))
+        results.append(check_proof_consistency(label_alcohol_content, alcohol_conf))
+
+    normalised_label_class_type = _normalise(label_class_type) if label_class_type else ""
+
+    if "bourbon" in normalised_label_class_type:
+        results.append(check_bourbon_us_origin(label_class_type, label_country, country_conf))
+
+    if "kentucky" in normalised_label_class_type:
+        results.append(check_kentucky_designation(label_class_type, label_bottler, bottler_conf))
+
+    if "age_statement" in filled:
+        results.append(check_age_statement(filled["age_statement"], label_age, age_conf))
+
+    if "straight" in normalised_label_class_type:
+        results.append(check_no_additives_for_straight(label_class_type, label_additives, additives_conf))
 
     return results

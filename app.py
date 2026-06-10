@@ -76,6 +76,7 @@ def _application_from_sidebar() -> ApplicationData:
         government_warning=st.session_state.get("sb_gov_warning", ""),
         bottler_name_address=st.session_state.get("sb_bottler", ""),
         country_of_origin=st.session_state.get("sb_country", ""),
+        age_statement=st.session_state.get("sb_age_statement", ""),
     )
 
 
@@ -256,6 +257,11 @@ def _render_sidebar() -> None:
 
         st.text_input("Bottler Name & Address", key="sb_bottler", placeholder="Optional — presence check only")
         st.text_input("Country of Origin", key="sb_country", placeholder="Optional — presence check only")
+        st.text_input(
+            "Age Statement (COLA application)",
+            key="sb_age_statement",
+            placeholder="e.g. Aged 3 Years — required on label if under 4 years",
+        )
 
         st.divider()
         st.caption(
