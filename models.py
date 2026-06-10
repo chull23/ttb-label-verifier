@@ -130,6 +130,7 @@ class ApplicationData:
     government_warning: str = ""
     bottler_name_address: str = ""
     country_of_origin: str = ""
+    age_statement: str = ""
 
     def filled_fields(self) -> dict[str, str]:
         """Return only fields that the agent actually provided."""
@@ -143,6 +144,7 @@ class ApplicationData:
                 "government_warning": self.government_warning,
                 "bottler_name_address": self.bottler_name_address,
                 "country_of_origin": self.country_of_origin,
+                "age_statement": self.age_statement,
             }.items()
             if v.strip()
         }
