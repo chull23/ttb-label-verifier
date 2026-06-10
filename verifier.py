@@ -108,7 +108,7 @@ def _call_claude(image_bytes: bytes, media_type: str) -> str:
     try:
         response = client.messages.create(
             model=settings.claude_model,
-            max_tokens=1024,
+            max_tokens=2048,
             system=SYSTEM_PROMPT,
             messages=[
                 {
@@ -150,8 +150,16 @@ def _parse_response(raw: str) -> dict[str, dict]:
 
     try:
         data = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise MalformedResponseError(raw) from exc
+    except json.JSONDecodeError:
+        # Claude sometimes prefaces the JSON with explanatory text. Try to
+        # extract the first top-level {...} block and parse that instead.
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if not match:
+            raise MalformedResponseError(raw)
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError as exc:
+            raise MalformedResponseError(raw) from exc
 
     if "fields" not in data or not isinstance(data["fields"], list):
         raise MalformedResponseError(raw)
