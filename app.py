@@ -265,7 +265,6 @@ def _render_sidebar() -> None:
 
         st.divider()
         st.caption(
-            f"Model: `{settings.claude_model}`  \n"
             f"Timeout: {settings.api_timeout_seconds:.0f}s  \n"
             f"Batch concurrency: {settings.max_concurrent}"
         )
