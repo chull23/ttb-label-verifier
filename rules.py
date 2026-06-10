@@ -739,9 +739,8 @@ def apply_rules(
     label_age, age_conf, _ = get("age_statement")
     label_additives, additives_conf, _ = get("additives_or_flavoring")
 
-    if "alcohol_content" in filled:
-        results.append(check_minimum_bottling_proof(label_alcohol_content, alcohol_conf))
-        results.append(check_proof_consistency(label_alcohol_content, alcohol_conf))
+    results.append(check_minimum_bottling_proof(label_alcohol_content, alcohol_conf))
+    results.append(check_proof_consistency(label_alcohol_content, alcohol_conf))
 
     normalised_label_class_type = _normalise(label_class_type) if label_class_type else ""
 
