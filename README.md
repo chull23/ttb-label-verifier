@@ -9,8 +9,8 @@ AI-powered alcohol label verification prototype for the TTB Compliance Division.
 git clone <your-repo-url>
 cd ttb-label-verifier
 
-# 2. Create and activate a virtual environment
-python3 -m venv .venv
+# 2. Create and activate a virtual environment (requires Python 3.10+)
+python3.10 -m venv .venv        # or python3.11/3.12/3.13, etc.
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
 # 3. Install dependencies
@@ -21,7 +21,7 @@ cp .env.example .env
 # Edit .env and set ANTHROPIC_API_KEY=sk-ant-...
 
 # 5. Run the app
-streamlit run app.py
+.venv/bin/streamlit run app.py
 ```
 
 The app opens at http://localhost:8501.
