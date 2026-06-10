@@ -77,6 +77,12 @@ def _application_from_sidebar() -> ApplicationData:
         bottler_name_address=st.session_state.get("sb_bottler", ""),
         country_of_origin=st.session_state.get("sb_country", ""),
         age_statement=st.session_state.get("sb_age_statement", ""),
+        beverage_type=st.session_state.get("sb_beverage_type", "distilled_spirits"),
+        sulfite_ppm=st.session_state.get("sb_sulfite_ppm", ""),
+        vintage_year=st.session_state.get("sb_vintage_year", ""),
+        added_flavor_alcohol=st.session_state.get("sb_added_flavor_alcohol", ""),
+        color_additives=st.session_state.get("sb_color_additives", ""),
+        aspartame_present=st.session_state.get("sb_aspartame_present", ""),
     )
 
 
@@ -238,6 +244,18 @@ def _render_sidebar() -> None:
             "Empty fields are skipped."
         )
 
+        st.selectbox(
+            "Beverage Type",
+            options=["distilled_spirits", "wine", "beer"],
+            format_func=lambda v: {
+                "distilled_spirits": "Distilled Spirits",
+                "wine": "Wine",
+                "beer": "Beer / Malt Beverage",
+            }[v],
+            key="sb_beverage_type",
+            help="Routes label-specific compliance rules (27 CFR Parts 4, 5, and 7).",
+        )
+
         st.text_input("Brand Name", key="sb_brand_name", placeholder="e.g. OLD TOM DISTILLERY")
         st.text_input("Class / Type", key="sb_class_type", placeholder="e.g. Kentucky Straight Bourbon Whiskey")
         st.text_input("Alcohol Content", key="sb_alcohol_content", placeholder="e.g. 45% Alc./Vol. (90 Proof)")
@@ -262,6 +280,38 @@ def _render_sidebar() -> None:
             key="sb_age_statement",
             placeholder="e.g. Aged 3 Years — required on label if under 4 years",
         )
+
+        if st.session_state.get("sb_beverage_type") == "wine":
+            st.subheader("Wine-specific")
+            st.text_input(
+                "Sulfite Level",
+                key="sb_sulfite_ppm",
+                placeholder="e.g. 25 ppm or 0",
+            )
+            st.text_input(
+                "Vintage Year",
+                key="sb_vintage_year",
+                placeholder="e.g. 2021",
+            )
+
+        if st.session_state.get("sb_beverage_type") == "beer":
+            st.subheader("Beer-specific")
+            st.selectbox(
+                "Alcohol from added flavors/ingredients?",
+                options=["", "yes", "no"],
+                key="sb_added_flavor_alcohol",
+                help="If 'yes', a numeric alcohol content statement becomes mandatory.",
+            )
+            st.text_input(
+                "Color Additives",
+                key="sb_color_additives",
+                placeholder="e.g. FD&C Yellow No. 5, Cochineal Extract",
+            )
+            st.selectbox(
+                "Contains Aspartame?",
+                options=["", "yes", "no"],
+                key="sb_aspartame_present",
+            )
 
         st.divider()
         st.caption(

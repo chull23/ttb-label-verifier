@@ -96,6 +96,17 @@ def _parse_age_years(text: str) -> float | None:
     return None
 
 
+def _parse_ppm(text: str) -> float | None:
+    """Extract a parts-per-million figure, e.g. '25 ppm' -> 25.0, '0' -> 0.0."""
+    match = re.search(r"(\d+(?:\.\d+)?)\s*ppm", text, re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+    match = re.match(r"\s*(\d+(?:\.\d+)?)\s*$", text)
+    if match:
+        return float(match.group(1))
+    return None
+
+
 def _parse_volume_ml(text: str) -> float | None:
     """
     Extract a volume in mL from a string.
@@ -659,6 +670,641 @@ def check_no_additives_for_straight(
     )
 
 
+# ── Distilled spirits — additional rules (27 CFR Part 5) ───────────────────────
+
+def check_bottled_in_bond(
+    label_class_type: str,
+    label_alcohol_content: str | None,
+    label_age: str | None,
+    confidence: float,
+) -> FieldResult | None:
+    """
+    27 CFR 5.87 — "Bottled in Bond"/"Bonded" requires exactly 100 proof (50% ABV)
+    and at least 4 years of aging. (Single distillery/season and bonded-warehouse
+    storage cannot be verified from a label image alone.)
+    """
+    field_name = "Bottled in Bond"
+    requirement = "Exactly 100 proof (50% ABV) and aged ≥ 4 years (27 CFR 5.87)"
+
+    normalised = _normalise(label_class_type)
+    if "bottled in bond" not in normalised and "bonded" not in normalised:
+        return None
+
+    issues: list[str] = []
+
+    label_abv = _parse_abv(label_alcohol_content) if label_alcohol_content else None
+    if label_abv is None:
+        issues.append("Could not find a numeric ABV/proof to confirm the required 100 proof (50% ABV).")
+    elif abs(label_abv - 50.0) > 0.1:
+        issues.append(f"Label states {label_abv}% ABV, but Bottled in Bond requires exactly 50% ABV (100 proof).")
+
+    label_age_years = _parse_age_years(label_age) if label_age else None
+    if label_age_years is None:
+        issues.append("No age statement found to confirm the required minimum of 4 years aging.")
+    elif label_age_years < 4:
+        issues.append(f"Label states an age of {label_age_years:g} years, but Bottled in Bond requires at least 4 years.")
+
+    if issues:
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=label_alcohol_content,
+            status="FAIL",
+            notes=" | ".join(issues),
+            confidence=confidence,
+        )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_alcohol_content,
+        status="PASS",
+        notes=(
+            "Proof and age requirements verified. Single distillery/distilling season "
+            "and bonded-warehouse storage cannot be confirmed from the label image — "
+            "verify against DSP records."
+        ),
+        confidence=confidence,
+    )
+
+
+_ABV_SPELLED_OUT_PATTERN = re.compile(r"alcohol\s+by\s+volume|alc\.?\s*by\s*vol", re.IGNORECASE)
+_ABV_ABBREVIATION_PATTERN = re.compile(r"\bABV\b")
+
+
+def check_abv_abbreviation(
+    label_alcohol_content: str | None,
+    confidence: float,
+) -> FieldResult:
+    """
+    The mandatory alcohol content statement must spell out "alcohol by volume" or
+    "alc. by vol." — the bare abbreviation "ABV" is not permitted (spirits and wine).
+    """
+    field_name = "ABV Abbreviation"
+    requirement = 'Must say "alcohol by volume" or "alc. by vol.", not "ABV"'
+
+    if label_alcohol_content is None:
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=None,
+            status="NOT_FOUND",
+            notes="Alcohol content statement not found on the label.",
+            confidence=confidence,
+        )
+
+    if _ABV_ABBREVIATION_PATTERN.search(label_alcohol_content) and not _ABV_SPELLED_OUT_PATTERN.search(
+        label_alcohol_content
+    ):
+        status: FieldStatus = "FAIL"
+        notes = (
+            f"Label uses the abbreviation 'ABV' ('{label_alcohol_content}'), which is not permitted "
+            'in the mandatory alcohol content statement. Use "alcohol by volume" or "alc. by vol." instead.'
+        )
+    else:
+        status = "PASS"
+        notes = ""
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_alcohol_content,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+def check_misleading_age_claim(
+    application_age_value: str,
+    label_age_value: str | None,
+    confidence: float,
+) -> FieldResult | None:
+    """
+    A label cannot claim an age greater than the actual (declared) age of the
+    youngest distillate in the bottle.
+    """
+    field_name = "Age Claim Accuracy"
+
+    app_age_years = _parse_age_years(application_age_value)
+    label_age_years = _parse_age_years(label_age_value) if label_age_value else None
+
+    if app_age_years is None or label_age_years is None:
+        return None
+
+    requirement = f"Label age claim must not exceed declared age of {app_age_years:g} years"
+
+    if label_age_years > app_age_years + 1e-9:
+        status: FieldStatus = "FAIL"
+        notes = (
+            f"Label claims an age of {label_age_years:g} years, but the COLA application "
+            f"declares an actual (youngest distillate) age of only {app_age_years:g} years."
+        )
+    else:
+        status = "PASS"
+        notes = ""
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_age_value,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+# ── Cross-cutting — sulfite phrasing (wine and beer) ────────────────────────────
+
+_SULFITE_FREE_PATTERN = re.compile(
+    r"sulfite[\s-]*free|free\s+of\s+sulfites|contains?\s+no\s+sulfites",
+    re.IGNORECASE,
+)
+
+
+def check_sulfite_free_prohibition(
+    label_sulfite_statement: str | None,
+    confidence: float,
+) -> FieldResult | None:
+    """
+    "Sulfite free", "free of sulfites", and "contains no sulfites" are prohibited
+    phrasings regardless of actual sulfite content.
+    """
+    field_name = "Sulfite-Free Claim"
+    requirement = '"Sulfite free" / "contains no sulfites" claims are prohibited'
+
+    if not label_sulfite_statement:
+        return None
+
+    if _SULFITE_FREE_PATTERN.search(label_sulfite_statement):
+        status: FieldStatus = "FAIL"
+        notes = (
+            f"Label states '{label_sulfite_statement}'. Phrases like 'sulfite free', "
+            "'free of sulfites', and 'contains no sulfites' are prohibited regardless "
+            "of actual sulfite content. 'No sulfites detected' or 'less than 10 ppm' "
+            "are the permitted alternatives."
+        )
+    else:
+        status = "PASS"
+        notes = ""
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_sulfite_statement,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+# ── Wine rules (27 CFR Part 4) ──────────────────────────────────────────────────
+
+_SULFITE_DECLARATION_PATTERN = re.compile(r"contains?\s+sulfit", re.IGNORECASE)
+
+
+def check_wine_sulfite_declaration(
+    application_sulfite_ppm: str,
+    label_sulfite_statement: str | None,
+    confidence: float,
+) -> FieldResult:
+    """27 CFR 4.32(e) — wines with >= 10 ppm SO2 must declare 'Contains sulfites'."""
+    field_name = "Sulfite Declaration"
+
+    ppm = _parse_ppm(application_sulfite_ppm)
+    if ppm is None:
+        return FieldResult(
+            field_name=field_name,
+            application_value=application_sulfite_ppm,
+            label_value=label_sulfite_statement,
+            status="NOT_FOUND",
+            notes="Could not parse a numeric sulfite level from the application.",
+            confidence=confidence,
+        )
+
+    requirement = "Must state 'Contains sulfites' / 'Contains sulfiting agents' (27 CFR 4.32(e))"
+
+    if ppm < 10:
+        return FieldResult(
+            field_name=field_name,
+            application_value=f"{ppm:g} ppm SO2 (below 10 ppm threshold)",
+            label_value=label_sulfite_statement,
+            status="NOT_FOUND",
+            notes="Sulfite level is below the 10 ppm threshold; no declaration is required.",
+            confidence=confidence,
+        )
+
+    if label_sulfite_statement and _SULFITE_DECLARATION_PATTERN.search(label_sulfite_statement):
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = (
+            f"Application declares {ppm:g} ppm SO2 (>= 10 ppm), so the label must state "
+            "'Contains sulfites' or 'Contains sulfiting agents', but no such statement was found."
+        )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=f"{ppm:g} ppm SO2",
+        label_value=label_sulfite_statement,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+def check_wine_abv_threshold(
+    application_alcohol_content: str,
+    label_alcohol_content: str | None,
+    label_class_type: str | None,
+    confidence: float,
+) -> FieldResult | None:
+    """
+    27 CFR 4.32(b) / 4.36 — wines over 14% ABV must show a numeric alcohol content
+    statement. Wines 7-14% ABV may substitute 'table wine'/'light wine' as the
+    class/type. Below 7% ABV, FAA Act labeling rules don't apply.
+    """
+    field_name = "Wine ABV Statement"
+
+    app_abv = _parse_abv(application_alcohol_content)
+    if app_abv is None:
+        return None
+
+    if app_abv < 7:
+        return FieldResult(
+            field_name=field_name,
+            application_value=f"{app_abv:g}% ABV",
+            label_value=label_alcohol_content,
+            status="NOT_FOUND",
+            notes="Wine is below 7% ABV; FAA Act alcohol content labeling rules do not apply.",
+            confidence=confidence,
+        )
+
+    label_abv = _parse_abv(label_alcohol_content) if label_alcohol_content else None
+    normalised_class_type = _normalise(label_class_type) if label_class_type else ""
+    has_table_or_light_wine = "table wine" in normalised_class_type or "light wine" in normalised_class_type
+
+    if app_abv > 14:
+        requirement = "Numeric alcohol content statement required (> 14% ABV) — 27 CFR 4.32(b)"
+        if label_abv is not None:
+            status: FieldStatus = "PASS"
+            notes = ""
+        else:
+            status = "FAIL"
+            notes = (
+                f"Application declares {app_abv:g}% ABV (> 14%), so a numeric alcohol content "
+                "statement is mandatory on the label, but none was found."
+            )
+    else:
+        requirement = (
+            "Numeric alcohol content statement, or 'table wine'/'light wine' "
+            "class/type (7-14% ABV) — 27 CFR 4.32(b)/4.36"
+        )
+        if label_abv is not None or has_table_or_light_wine:
+            status = "PASS"
+            notes = ""
+        else:
+            status = "FAIL"
+            notes = (
+                f"Application declares {app_abv:g}% ABV (7-14%), so the label must show a numeric "
+                "alcohol content statement or use 'table wine'/'light wine' as the class/type, "
+                "but neither was found."
+            )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_alcohol_content,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+def check_table_wine_abv_tolerance(
+    application_alcohol_content: str,
+    label_class_type: str | None,
+    confidence: float,
+) -> FieldResult | None:
+    """27 CFR 4.36 — if 'table wine'/'light wine' is used as the class/type, actual ABV must be 7-14%."""
+    field_name = "Table Wine ABV Tolerance"
+
+    normalised_class_type = _normalise(label_class_type) if label_class_type else ""
+    if "table wine" not in normalised_class_type and "light wine" not in normalised_class_type:
+        return None
+
+    requirement = "'Table wine'/'light wine' designation requires 7-14% ABV (27 CFR 4.36)"
+
+    app_abv = _parse_abv(application_alcohol_content)
+    if app_abv is None:
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=label_class_type,
+            status="NOT_FOUND",
+            notes="Could not parse a numeric ABV from the application to verify the 7-14% tolerance.",
+            confidence=confidence,
+        )
+
+    if 7.0 <= app_abv <= 14.0:
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = (
+            f"Label class/type uses 'table wine'/'light wine', which requires 7-14% ABV, "
+            f"but the application declares {app_abv:g}% ABV."
+        )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_class_type,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+GRAPE_VARIETALS = [
+    "cabernet sauvignon", "cabernet franc", "merlot", "pinot noir", "pinot grigio",
+    "pinot gris", "chardonnay", "sauvignon blanc", "zinfandel", "syrah", "shiraz",
+    "malbec", "riesling", "tempranillo", "sangiovese", "grenache", "viognier",
+    "chenin blanc", "gewurztraminer", "barbera", "nebbiolo", "petite sirah",
+]
+
+
+def check_wine_appellation(
+    label_class_type: str | None,
+    label_vintage_year: str | None,
+    label_appellation: str | None,
+    confidence: float,
+) -> FieldResult | None:
+    """
+    27 CFR 4.23/4.27 — a grape varietal class/type designation, or the presence of a
+    vintage date, requires an appellation of origin on the brand label.
+    """
+    field_name = "Appellation of Origin"
+
+    normalised_class_type = _normalise(label_class_type) if label_class_type else ""
+    has_varietal = any(v in normalised_class_type for v in GRAPE_VARIETALS)
+    has_vintage = bool(label_vintage_year and label_vintage_year.strip())
+
+    if not has_varietal and not has_vintage:
+        return None
+
+    triggers = []
+    if has_varietal:
+        triggers.append("a grape varietal is used as the class/type")
+    if has_vintage:
+        triggers.append("a vintage date appears on the label")
+    requirement = f"Appellation of origin required because {' and '.join(triggers)} (27 CFR 4.23/4.27)"
+
+    if label_appellation and label_appellation.strip():
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = f"{requirement.capitalize()}, but no appellation of origin was found on the label."
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_appellation,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+_VARIETAL_PERCENT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+
+
+def check_wine_varietal_percentages(
+    label_class_type: str | None,
+    confidence: float,
+) -> FieldResult | None:
+    """
+    27 CFR 4.23 — when two or more grape varieties are listed as the class/type
+    (e.g. "Cabernet Sauvignon-Merlot"), each variety's percentage must be shown
+    and must sum to 100%.
+    """
+    field_name = "Varietal Percentages"
+
+    if not label_class_type:
+        return None
+
+    normalised_class_type = _normalise(label_class_type)
+    matched_varietals = [v for v in GRAPE_VARIETALS if v in normalised_class_type]
+    if len(matched_varietals) < 2:
+        return None
+
+    requirement = "Multi-varietal class/type must show each variety's percentage, summing to 100% (27 CFR 4.23)"
+    percentages = [float(m) for m in _VARIETAL_PERCENT_PATTERN.findall(label_class_type)]
+
+    if len(percentages) < len(matched_varietals):
+        status: FieldStatus = "FAIL"
+        notes = (
+            f"Class/type lists multiple varieties ('{label_class_type}') but does not show "
+            "a percentage for each."
+        )
+    elif abs(sum(percentages) - 100.0) > 0.5:
+        status = "FAIL"
+        notes = f"Varietal percentages in '{label_class_type}' sum to {sum(percentages):g}%, not 100%."
+    else:
+        status = "PASS"
+        notes = ""
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_class_type,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+# Approved standards of fill for wine, in mL (27 CFR 4.72).
+WINE_STANDARDS_OF_FILL_ML = {50, 100, 187, 200, 375, 500, 750, 1000, 1500, 3000, 4000, 4500, 6000, 9000, 12000, 15000, 18000}
+
+
+def check_wine_standard_of_fill(
+    label_net_contents: str | None,
+    confidence: float,
+) -> FieldResult:
+    """27 CFR 4.72 — wine must be packaged in TTB-approved standard sizes."""
+    field_name = "Standard of Fill"
+    requirement = "Net contents must be a TTB-approved standard size (27 CFR 4.72)"
+
+    if label_net_contents is None:
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=None,
+            status="NOT_FOUND",
+            notes="Net contents not found on the label.",
+            confidence=confidence,
+        )
+
+    label_ml = _parse_volume_ml(label_net_contents)
+    if label_ml is None:
+        return FieldResult(
+            field_name=field_name,
+            application_value=requirement,
+            label_value=label_net_contents,
+            status="NOT_FOUND",
+            notes="Could not parse a volume from the net contents.",
+            confidence=confidence,
+        )
+
+    if any(abs(label_ml - size) < 0.5 for size in WINE_STANDARDS_OF_FILL_ML):
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = f"{label_ml:g} mL is not a TTB-approved standard of fill for wine."
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_net_contents,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+# ── Beer / malt beverage rules (27 CFR Part 7) ──────────────────────────────────
+
+def check_beer_conditional_abv(
+    application_added_flavor_alcohol: str,
+    label_alcohol_content: str | None,
+    confidence: float,
+) -> FieldResult | None:
+    """
+    Unlike spirits/wine, ABV is not mandatory on beer unless the product contains
+    alcohol from added flavors or non-beverage ingredients.
+    """
+    field_name = "Beer ABV Statement"
+
+    if _normalise(application_added_flavor_alcohol) != "yes":
+        return None
+
+    requirement = (
+        "Numeric alcohol content statement required — product contains alcohol from "
+        "added flavors/ingredients (27 CFR 7.71)"
+    )
+
+    if label_alcohol_content and _parse_abv(label_alcohol_content) is not None:
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = (
+            "Application indicates alcohol is contributed by added flavors/ingredients, "
+            "which makes a numeric alcohol content statement mandatory, but none was found on the label."
+        )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_alcohol_content,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+def check_color_additive_declaration(
+    application_color_additives: str,
+    label_color_additive_declaration: str | None,
+    confidence: float,
+) -> FieldResult | None:
+    """27 CFR 7.63(b) — FD&C Yellow No. 5 (tartrazine) and cochineal/carmine must be declared."""
+    field_name = "Color Additive Declaration"
+
+    if not application_color_additives.strip():
+        return None
+
+    normalised_app = _normalise(application_color_additives)
+    declared_terms = []
+    if "yellow" in normalised_app or "tartrazine" in normalised_app:
+        declared_terms.append("FD&C Yellow No. 5")
+    if "cochineal" in normalised_app or "carmine" in normalised_app:
+        declared_terms.append("cochineal extract/carmine")
+
+    if not declared_terms:
+        return None
+
+    requirement = f"Must declare: {', '.join(declared_terms)} (27 CFR 7.63(b))"
+    normalised_label = _normalise(label_color_additive_declaration) if label_color_additive_declaration else ""
+
+    missing = []
+    for term in declared_terms:
+        key_words = re.findall(r"[a-z0-9]+", term.lower())
+        if not any(w in normalised_label for w in key_words if len(w) > 3):
+            missing.append(term)
+
+    if missing:
+        status: FieldStatus = "FAIL"
+        notes = (
+            f"Application declares {', '.join(declared_terms)}, but the label does not "
+            f"declare: {', '.join(missing)}."
+        )
+    else:
+        status = "PASS"
+        notes = ""
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_color_additive_declaration,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
+_PHENYLKETONURICS_PATTERN = re.compile(
+    r"phenylketonurics\s*:?\s*contains\s+phenylalanine", re.IGNORECASE
+)
+
+
+def check_aspartame_declaration(
+    application_aspartame_present: str,
+    label_aspartame_statement: str | None,
+    confidence: float,
+) -> FieldResult | None:
+    """27 CFR 7.63(b) — products containing aspartame must bear the phenylketonurics warning."""
+    field_name = "Aspartame Declaration"
+
+    if _normalise(application_aspartame_present) != "yes":
+        return None
+
+    requirement = 'Must state "PHENYLKETONURICS: CONTAINS PHENYLALANINE" (27 CFR 7.63(b))'
+
+    if label_aspartame_statement and _PHENYLKETONURICS_PATTERN.search(label_aspartame_statement):
+        status: FieldStatus = "PASS"
+        notes = ""
+    else:
+        status = "FAIL"
+        notes = (
+            "Application indicates the product contains aspartame, which requires the "
+            'statement "PHENYLKETONURICS: CONTAINS PHENYLALANINE", but it was not found on the label.'
+        )
+
+    return FieldResult(
+        field_name=field_name,
+        application_value=requirement,
+        label_value=label_aspartame_statement,
+        status=status,
+        notes=notes,
+        confidence=confidence,
+    )
+
+
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
 def apply_rules(
@@ -731,29 +1377,105 @@ def apply_rules(
             check_presence_only("Country of Origin", filled["country_of_origin"], val, conf)
         )
 
-    # ── Standards-of-identity rules (27 CFR Part 5) ─────────────────────────────
+    # ── Shared label values ─────────────────────────────────────────────────────
     label_alcohol_content, alcohol_conf, _ = get("alcohol_content")
     label_class_type, class_type_conf, _ = get("class_type")
     label_country, country_conf, _ = get("country_of_origin")
     label_bottler, bottler_conf, _ = get("bottler_name_address")
     label_age, age_conf, _ = get("age_statement")
     label_additives, additives_conf, _ = get("additives_or_flavoring")
+    label_appellation, appellation_conf, _ = get("appellation_of_origin")
+    label_vintage_year, vintage_conf, _ = get("vintage_year")
+    label_sulfite_statement, sulfite_conf, _ = get("sulfite_statement")
+    label_color_additives, color_conf, _ = get("color_additive_declaration")
+    label_aspartame_statement, aspartame_conf, _ = get("aspartame_statement")
+    label_net_contents, net_contents_conf, _ = get("net_contents")
 
-    results.append(check_minimum_bottling_proof(label_alcohol_content, alcohol_conf))
-    results.append(check_proof_consistency(label_alcohol_content, alcohol_conf))
+    beverage_type = application.beverage_type or "distilled_spirits"
 
-    normalised_label_class_type = _normalise(label_class_type) if label_class_type else ""
+    # ABV abbreviation prohibition applies to spirits and wine.
+    if beverage_type in ("distilled_spirits", "wine"):
+        results.append(check_abv_abbreviation(label_alcohol_content, alcohol_conf))
 
-    if "bourbon" in normalised_label_class_type:
-        results.append(check_bourbon_us_origin(label_class_type, label_country, country_conf))
+    # Sulfite-free phrasing is prohibited on wine and beer regardless of content.
+    if beverage_type in ("wine", "beer"):
+        result = check_sulfite_free_prohibition(label_sulfite_statement, sulfite_conf)
+        if result:
+            results.append(result)
 
-    if "kentucky" in normalised_label_class_type:
-        results.append(check_kentucky_designation(label_class_type, label_bottler, bottler_conf))
+    if beverage_type == "distilled_spirits":
+        # ── Standards-of-identity rules (27 CFR Part 5) ─────────────────────────
+        results.append(check_minimum_bottling_proof(label_alcohol_content, alcohol_conf))
+        results.append(check_proof_consistency(label_alcohol_content, alcohol_conf))
 
-    if "age_statement" in filled:
-        results.append(check_age_statement(filled["age_statement"], label_age, age_conf))
+        normalised_label_class_type = _normalise(label_class_type) if label_class_type else ""
 
-    if "straight" in normalised_label_class_type:
-        results.append(check_no_additives_for_straight(label_class_type, label_additives, additives_conf))
+        if "bourbon" in normalised_label_class_type:
+            results.append(check_bourbon_us_origin(label_class_type, label_country, country_conf))
+
+        if "kentucky" in normalised_label_class_type:
+            results.append(check_kentucky_designation(label_class_type, label_bottler, bottler_conf))
+
+        if "age_statement" in filled:
+            results.append(check_age_statement(filled["age_statement"], label_age, age_conf))
+
+        if "straight" in normalised_label_class_type:
+            results.append(check_no_additives_for_straight(label_class_type, label_additives, additives_conf))
+
+        bottled_in_bond = check_bottled_in_bond(label_class_type or "", label_alcohol_content, label_age, alcohol_conf)
+        if bottled_in_bond:
+            results.append(bottled_in_bond)
+
+        if "age_statement" in filled:
+            misleading_age = check_misleading_age_claim(filled["age_statement"], label_age, age_conf)
+            if misleading_age:
+                results.append(misleading_age)
+
+    elif beverage_type == "wine":
+        # ── Wine rules (27 CFR Part 4) ──────────────────────────────────────────
+        if "sulfite_ppm" in filled:
+            results.append(check_wine_sulfite_declaration(filled["sulfite_ppm"], label_sulfite_statement, sulfite_conf))
+
+        if "alcohol_content" in filled:
+            abv_threshold = check_wine_abv_threshold(
+                filled["alcohol_content"], label_alcohol_content, label_class_type, alcohol_conf
+            )
+            if abv_threshold:
+                results.append(abv_threshold)
+
+            table_wine = check_table_wine_abv_tolerance(filled["alcohol_content"], label_class_type, class_type_conf)
+            if table_wine:
+                results.append(table_wine)
+
+        appellation = check_wine_appellation(label_class_type, label_vintage_year, label_appellation, appellation_conf)
+        if appellation:
+            results.append(appellation)
+
+        varietal_pct = check_wine_varietal_percentages(label_class_type, class_type_conf)
+        if varietal_pct:
+            results.append(varietal_pct)
+
+        results.append(check_wine_standard_of_fill(label_net_contents, net_contents_conf))
+
+    elif beverage_type == "beer":
+        # ── Beer / malt beverage rules (27 CFR Part 7) ──────────────────────────
+        if "added_flavor_alcohol" in filled:
+            beer_abv = check_beer_conditional_abv(filled["added_flavor_alcohol"], label_alcohol_content, alcohol_conf)
+            if beer_abv:
+                results.append(beer_abv)
+
+        if "color_additives" in filled:
+            color_result = check_color_additive_declaration(
+                filled["color_additives"], label_color_additives, color_conf
+            )
+            if color_result:
+                results.append(color_result)
+
+        if "aspartame_present" in filled:
+            aspartame_result = check_aspartame_declaration(
+                filled["aspartame_present"], label_aspartame_statement, aspartame_conf
+            )
+            if aspartame_result:
+                results.append(aspartame_result)
 
     return results
