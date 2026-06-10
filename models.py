@@ -132,6 +132,24 @@ class ApplicationData:
     country_of_origin: str = ""
     age_statement: str = ""
 
+    beverage_type: str = "distilled_spirits"
+    """One of 'distilled_spirits', 'wine', 'beer'. Routes type-specific rules."""
+
+    sulfite_ppm: str = ""
+    """Wine: declared sulfur dioxide level, e.g. '25 ppm' or '0'."""
+
+    vintage_year: str = ""
+    """Wine: vintage year declared on the application, if any."""
+
+    added_flavor_alcohol: str = ""
+    """Beer: 'yes'/'no' — whether alcohol is contributed by added flavors/ingredients."""
+
+    color_additives: str = ""
+    """Beer: comma-separated list of declared color additives, e.g. 'FD&C Yellow No. 5'."""
+
+    aspartame_present: str = ""
+    """Beer: 'yes'/'no' — whether the product contains aspartame."""
+
     def filled_fields(self) -> dict[str, str]:
         """Return only fields that the agent actually provided."""
         return {
@@ -145,6 +163,11 @@ class ApplicationData:
                 "bottler_name_address": self.bottler_name_address,
                 "country_of_origin": self.country_of_origin,
                 "age_statement": self.age_statement,
+                "sulfite_ppm": self.sulfite_ppm,
+                "vintage_year": self.vintage_year,
+                "added_flavor_alcohol": self.added_flavor_alcohol,
+                "color_additives": self.color_additives,
+                "aspartame_present": self.aspartame_present,
             }.items()
             if v.strip()
         }

@@ -28,6 +28,11 @@ Extract these fields exactly as they appear on the label:
 - country_of_origin (if present)
 - age_statement (e.g. "Aged 4 Years" or "Aged 18 Months", if present)
 - additives_or_flavoring (any wording indicating added coloring, flavoring, or blending materials, e.g. "Natural Flavors Added" or "Caramel Color Added", if present)
+- appellation_of_origin (e.g. "Napa Valley" or "California", if present — wine only)
+- vintage_year (a 4-digit year identifying the vintage, if present — wine only)
+- sulfite_statement (any wording about sulfites, e.g. "Contains Sulfites" or "Sulfite Free", if present — wine/beer)
+- color_additive_declaration (any declaration of FD&C Yellow No. 5, tartrazine, cochineal extract, or carmine, if present)
+- aspartame_statement (any phenylketonurics/aspartame warning, e.g. "PHENYLKETONURICS: CONTAINS PHENYLALANINE", if present — beer)
 
 Respond with ONLY valid JSON matching this exact schema — no markdown fences, no commentary:
 
@@ -46,7 +51,7 @@ Rules:
 1. Extract EXACTLY what is printed. Do not normalise capitalisation, punctuation, or spacing.
 2. If a field is not visible or not present, set extracted_value to null and confidence to 0.0.
 3. confidence reflects how clearly you can read the text: 1.0 = perfectly clear, 0.5 = partially obscured, 0.0 = cannot read.
-4. Include all nine fields in your response, even if null.
+4. Include all fourteen fields in your response, even if null.
 """
 
 
