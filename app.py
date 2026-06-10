@@ -165,6 +165,11 @@ def _extract_images_from_upload(uploaded_files) -> list[tuple[str, bytes]]:
         if name.endswith(".zip"):
             with zipfile.ZipFile(io.BytesIO(raw)) as zf:
                 for entry in zf.namelist():
+                    basename = entry.rsplit("/", 1)[-1]
+                    if basename.startswith("._") or basename.startswith("."):
+                        continue
+                    if "__MACOSX" in entry:
+                        continue
                     entry_lower = entry.lower()
                     if any(entry_lower.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp")):
                         images.append((entry, zf.read(entry)))
