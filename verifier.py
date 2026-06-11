@@ -85,6 +85,45 @@ def validate_image(image_bytes: bytes, filename: str = "") -> str:
     return media_type_for_filename(filename) if filename else f"image/{fmt.lower()}"
 
 
+# ── Image preparation ─────────────────────────────────────────────────────────
+
+# Anthropic's API rejects images whose base64-encoded payload exceeds ~5MB,
+# regardless of the app's own MAX_IMAGE_SIZE_MB limit. Stay comfortably under
+# that by targeting 4.5MB of raw bytes (base64 adds ~33% overhead).
+_API_MAX_IMAGE_BYTES = int(4.5 * 1_048_576)
+
+
+def _prepare_image_for_api(image_bytes: bytes, media_type: str) -> tuple[bytes, str]:
+    """
+    Downscale/recompress the image if needed so its size stays under the
+    Anthropic API's image limit. Returns (possibly re-encoded bytes, media_type).
+    """
+    if len(image_bytes) <= _API_MAX_IMAGE_BYTES:
+        return image_bytes, media_type
+
+    img = Image.open(BytesIO(image_bytes))
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+
+    quality = 90
+    scale = 1.0
+    while True:
+        buf = BytesIO()
+        if scale < 1.0:
+            new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+            resized = img.resize(new_size, Image.LANCZOS)
+        else:
+            resized = img
+        resized.save(buf, format="JPEG", quality=quality)
+        data = buf.getvalue()
+        if len(data) <= _API_MAX_IMAGE_BYTES or (quality <= 40 and scale <= 0.4):
+            return data, "image/jpeg"
+        if quality > 40:
+            quality -= 10
+        else:
+            scale -= 0.1
+
+
 # ── Claude API call ───────────────────────────────────────────────────────────
 
 def _call_claude(image_bytes: bytes, media_type: str) -> str:
@@ -218,6 +257,9 @@ def verify_label(
 
     # 1. Validate image
     media_type = validate_image(image_bytes, filename)
+
+    # 1b. Resize/recompress if needed to stay under the API's image size limit
+    image_bytes, media_type = _prepare_image_for_api(image_bytes, media_type)
 
     # 2. Call Claude
     raw = _call_claude(image_bytes, media_type)
