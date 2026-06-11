@@ -41,9 +41,13 @@ class TestBrandName:
         r = check_brand_name("OLD TOM DISTILLERY", None, 0.0)
         assert r.status == "NOT_FOUND"
 
-    def test_close_match_is_warning(self):
+    def test_misspelling_is_fail(self):
         r = check_brand_name("Old Tom Distillery", "Old Tom Distilleries", 1.0)
-        assert r.status == "WARNING"
+        assert r.status == "FAIL"
+
+    def test_case_difference_is_pass(self):
+        r = check_brand_name("Old Tom Distillery", "OLD TOM DISTILLERY", 1.0)
+        assert r.status == "PASS"
 
 
 # ── ABV ───────────────────────────────────────────────────────────────────────

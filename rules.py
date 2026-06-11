@@ -149,22 +149,17 @@ def check_brand_name(
             confidence=confidence,
         )
 
-    ratio = _fuzzy_ratio(application_value, label_value)
-
-    if ratio >= pass_threshold:
+    # Case differences are OK, but everything else (including misspellings)
+    # must match exactly.
+    if re.sub(r"\s+", " ", application_value).strip().casefold() == re.sub(
+        r"\s+", " ", label_value
+    ).strip().casefold():
         status: FieldStatus = "PASS"
         notes = ""
-    elif ratio >= warning_threshold:
-        status = "WARNING"
-        notes = (
-            f"Brand names are similar but differ (similarity {ratio:.0%}). "
-            f"Application: '{application_value}' / Label: '{label_value}'. "
-            "Review for intentional formatting differences."
-        )
     else:
         status = "FAIL"
         notes = (
-            f"Brand names do not match (similarity {ratio:.0%}). "
+            f"Brand names do not match exactly (case-insensitive). "
             f"Application: '{application_value}' / Label: '{label_value}'."
         )
 
