@@ -17,6 +17,26 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 
+def _get_setting(key: str, default: str = "") -> str:
+    """
+    Look up a setting from the environment first, then from Streamlit's
+    secrets store (st.secrets), falling back to `default`.
+
+    Streamlit Community Cloud injects values configured in the app's
+    "Secrets" panel via st.secrets, not as OS environment variables.
+    """
+    value = os.getenv(key)
+    if value is not None:
+        return value
+
+    try:
+        import streamlit as st
+
+        return str(st.secrets[key])
+    except Exception:
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     # ── Anthropic ─────────────────────────────────────────────────────────────
@@ -62,23 +82,23 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    """Load and validate settings from environment variables."""
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    """Load and validate settings from environment variables or Streamlit secrets."""
+    api_key = _get_setting("ANTHROPIC_API_KEY", "")
     # We don't raise here; the UI will catch APIAuthError at call time.
 
     return Settings(
         anthropic_api_key=api_key,
-        claude_model=os.getenv("CLAUDE_MODEL", "claude-opus-4-8"),
-        api_timeout_seconds=float(os.getenv("API_TIMEOUT_SECONDS", "20")),
-        max_concurrent=int(os.getenv("MAX_CONCURRENT", "5")),
-        max_image_size_mb=float(os.getenv("MAX_IMAGE_SIZE_MB", "20")),
-        brand_name_pass_threshold=float(os.getenv("BRAND_NAME_PASS_THRESHOLD", "0.92")),
-        brand_name_warning_threshold=float(os.getenv("BRAND_NAME_WARNING_THRESHOLD", "0.80")),
-        confidence_threshold=float(os.getenv("CONFIDENCE_THRESHOLD", "0.70")),
-        app_title=os.getenv("APP_TITLE", "TTB Label Verifier"),
-        page_icon=os.getenv("PAGE_ICON", "🏷️"),
-        auth_user=os.getenv("USER", ""),
-        auth_pass=os.getenv("USER_PASS", ""),
+        claude_model=_get_setting("CLAUDE_MODEL", "claude-opus-4-8"),
+        api_timeout_seconds=float(_get_setting("API_TIMEOUT_SECONDS", "20")),
+        max_concurrent=int(_get_setting("MAX_CONCURRENT", "5")),
+        max_image_size_mb=float(_get_setting("MAX_IMAGE_SIZE_MB", "20")),
+        brand_name_pass_threshold=float(_get_setting("BRAND_NAME_PASS_THRESHOLD", "0.92")),
+        brand_name_warning_threshold=float(_get_setting("BRAND_NAME_WARNING_THRESHOLD", "0.80")),
+        confidence_threshold=float(_get_setting("CONFIDENCE_THRESHOLD", "0.70")),
+        app_title=_get_setting("APP_TITLE", "TTB Label Verifier"),
+        page_icon=_get_setting("PAGE_ICON", "🏷️"),
+        auth_user=_get_setting("USER", ""),
+        auth_pass=_get_setting("USER_PASS", ""),
     )
 
 
