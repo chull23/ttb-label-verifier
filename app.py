@@ -397,12 +397,7 @@ def main() -> None:
             with col_result:
                 application = _application_from_sidebar()
 
-                if not application.has_any_data():
-                    st.info(
-                        "Fill in at least one COLA application field in the sidebar "
-                        "to start verification."
-                    )
-                else:
+                if st.button("Run Verification", type="primary", key="run_single"):
                     with st.spinner("Analysing label..."):
                         try:
                             uploaded.seek(0)
@@ -411,9 +406,18 @@ def main() -> None:
                                 application=application,
                                 filename=uploaded.name,
                             )
-                            _render_label_result(result)
+                            st.session_state["single_result"] = result
+                            st.session_state["single_result_error"] = None
                         except LabelVerificationError as exc:
-                            _render_exception(exc, retry_key="retry_single")
+                            st.session_state["single_result"] = None
+                            st.session_state["single_result_error"] = exc
+
+                result = st.session_state.get("single_result")
+                error = st.session_state.get("single_result_error")
+                if result is not None:
+                    _render_label_result(result)
+                elif error is not None:
+                    _render_exception(error, retry_key="retry_single")
 
     # ── Batch upload tab ──────────────────────────────────────────────────────
     with tab_batch:
