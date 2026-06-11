@@ -398,7 +398,7 @@ def main() -> None:
                 application = _application_from_sidebar()
 
                 if st.button("Run Verification", type="primary", key="run_single"):
-                    with st.spinner("Analysing label..."):
+                    with st.spinner("Analyzing label..."):
                         try:
                             uploaded.seek(0)
                             result = verify_label(
