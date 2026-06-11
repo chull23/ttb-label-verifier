@@ -105,5 +105,4 @@ See `.env.example` for all available settings. The most important:
 
 ## TTB requirements reference
 
-- [TTB Label Approval](https://www.ttb.gov/labeling)
 - [27 CFR Part 16](https://www.ecfr.gov/current/title-27/chapter-I/subchapter-A/part-16) — Government Warning Statement
