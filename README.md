@@ -76,6 +76,33 @@ See `.env.example` for all available settings. The most important:
 | `USER` | — | If set (with `USER_PASS`), requires login with this username |
 | `USER_PASS` | — | Password for `USER`. Login is disabled if either is unset |
 
+## Approach
+
+1. **Extraction (Claude, vision):** the uploaded label image is sent to Claude with a prompt (`prompt.py`) that asks it to extract label fields verbatim as JSON — brand name, class/type, alcohol content, net contents, government warning, bottler/address, country of origin, age statement, additives, appellation, vintage, sulfite/aspartame/color-additive statements, etc. Claude only extracts; it makes no compliance judgments.
+2. **Deterministic rules (no API calls):** `rules.py` compares the extracted label values against the COLA application fields entered in the sidebar and applies TTB regulatory checks (27 CFR Parts 4, 5, and 7) — e.g. brand name match, government warning verbatim text, ABV/proof consistency, minimum bottling proof, Bottled in Bond, Bourbon/Kentucky designations, sulfite declarations, appellation/varietal rules, standard of fill, and beer additive declarations.
+3. **Beverage-type routing:** the relevant ruleset (distilled spirits / wine / beer) is auto-detected from the label's class/type, with a manual override in the sidebar.
+4. **UI:** a Streamlit app with single-label and batch (ZIP/multi-file) modes. Verification runs only on button click to avoid unnecessary API spend. Results are shown as color-coded, stacked field cards; batch results can be exported as CSV.
+
+## Tools used
+
+- **Python 3.10+** — required for `X | None` type-union syntax used throughout.
+- **Streamlit** — web UI, file upload, sidebar form, session state.
+- **Anthropic Claude API** (`claude-opus-4-8` by default) — vision-based field extraction from label images.
+- **Pillow (PIL)** — image validation and downscaling/recompression to stay under the API's image size limit.
+- **pandas** — CSV export of batch results.
+- **pytest** — unit tests for `rules.py` (no API calls required).
+- **python-dotenv** — loads `.env` for local config; falls back to Streamlit `st.secrets` when deployed.
+
+## Assumptions
+
+- This is a **prototype**, not a certified compliance tool — results are meant to assist, not replace, human reviewers.
+- All label text is assumed to be in **English** (per TTB requirements); non-English labels are not specially handled.
+- COLA application data is entered manually via the sidebar; there is no integration with TTB's COLA system.
+- A single label image is assumed to show all the relevant mandatory text (front/back panels combined into one image, or the most informative panel).
+- Checks that can't be verified from an image alone are explicitly out of scope, e.g.: distillation proof ≤ 160°, mash bill composition, charred-new-oak barrel requirements, minimum 2-year aging for "straight" spirits, single-distillery/single-season/bonded-warehouse provenance for Bottled in Bond, and import-country-of-origin rules for beer.
+- Mandatory information printed only on a cap, cork, foil capsule, or container bottom (which TTB prohibits as the sole location) is not separately detected.
+- Confidence scores from Claude are used as a signal for `NEEDS_REVIEW`/low-confidence flags, not as a substitute for the deterministic rule checks.
+
 ## TTB requirements reference
 
 - [TTB Label Approval](https://www.ttb.gov/labeling)
