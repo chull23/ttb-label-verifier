@@ -24,7 +24,12 @@ cp .env.example .env
 .venv/bin/streamlit run app.py
 ```
 
-The app opens at http://localhost:8501.
+The app opens at http://localhost:8501 if run locally.
+
+## Login
+The app has simple password protection because it's in a public space and each API call to Anthropic costs money.
+
+**Creds**: admin/TTBGOV1!
 
 ## Usage
 
