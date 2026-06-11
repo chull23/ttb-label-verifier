@@ -12,7 +12,9 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# override=True so .env values for USER/USER_PASS take precedence over the
+# shell's own USER environment variable.
+load_dotenv(override=True)
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,13 @@ class Settings:
     app_title: str
     page_icon: str
 
+    # ── Auth ──────────────────────────────────────────────────────────────────
+    auth_user: str
+    """If set (along with AUTH_PASS), the app requires login with these credentials."""
+
+    auth_pass: str
+    """Password for AUTH_USER. Required for login if AUTH_USER is set."""
+
 
 def load_settings() -> Settings:
     """Load and validate settings from environment variables."""
@@ -68,6 +77,8 @@ def load_settings() -> Settings:
         confidence_threshold=float(os.getenv("CONFIDENCE_THRESHOLD", "0.70")),
         app_title=os.getenv("APP_TITLE", "TTB Label Verifier"),
         page_icon=os.getenv("PAGE_ICON", "🏷️"),
+        auth_user=os.getenv("USER", ""),
+        auth_pass=os.getenv("USER_PASS", ""),
     )
 
 

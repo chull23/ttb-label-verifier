@@ -68,6 +68,8 @@ See `.env.example` for all available settings. The most important:
 | `MAX_CONCURRENT` | `5` | Batch concurrency cap |
 | `BRAND_NAME_PASS_THRESHOLD` | `0.92` | Fuzzy match ratio for PASS |
 | `CONFIDENCE_THRESHOLD` | `0.70` | Below this = image quality warning |
+| `USER` | — | If set (with `USER_PASS`), requires login with this username |
+| `USER_PASS` | — | Password for `USER`. Login is disabled if either is unset |
 
 ## TTB requirements reference
 
