@@ -26,11 +26,6 @@ cp .env.example .env
 
 The app opens at http://localhost:8501 if run locally.
 
-## Login
-The app has simple password protection because it's in a public space and each API call to Anthropic costs money.
-
-**Creds**: admin/TTBGOV1!
-
 ## Usage
 
 **Single label:** upload one image, fill in the COLA fields in the sidebar, and click Verify.
@@ -73,8 +68,6 @@ See `.env.example` for all available settings. The most important:
 | `MAX_CONCURRENT` | `5` | Batch concurrency cap |
 | `BRAND_NAME_PASS_THRESHOLD` | `0.92` | Fuzzy match ratio for PASS |
 | `CONFIDENCE_THRESHOLD` | `0.70` | Below this = image quality warning |
-| `USER` | — | If set (with `USER_PASS`), requires login with this username |
-| `USER_PASS` | — | Password for `USER`. Login is disabled if either is unset |
 
 ## Approach
 

@@ -326,42 +326,9 @@ def _render_sidebar() -> None:
         )
 
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
-
-def _check_login() -> bool:
-    """
-    If AUTH_USER/AUTH_PASS (env: USER/USER_PASS) are configured, render a login
-    form and return True only once the entered credentials match. Returns True
-    immediately if no credentials are configured.
-    """
-    if not settings.auth_user or not settings.auth_pass:
-        return True
-
-    if st.session_state.get("authenticated"):
-        return True
-
-    st.title(f"{settings.page_icon} {settings.app_title}")
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Log in")
-
-    if submitted:
-        if username == settings.auth_user and password == settings.auth_pass:
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Invalid username or password.")
-
-    return False
-
-
 # ── Main UI ───────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    if not _check_login():
-        return
-
     _render_sidebar()
 
     st.title(f"{settings.page_icon} {settings.app_title}")
